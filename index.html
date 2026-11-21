@@ -1,0 +1,1045 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>3D Photo Sphere Visualizer (HEIC + 200+ Photos)</title>
+  <!-- Load multi-CDN fallback for heic2any + libheif-js for modern 10-bit/HDR iPhone HEIC files -->
+  <script src="https://cdn.jsdelivr.net/npm/heic2any@0.0.4/dist/heic2any.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/libheif-js@1.18.2/libheif-wasm/libheif-bundle.js"></script>
+  <style>
+    :root {
+      --bg: #07090e;
+      --panel: rgba(16, 20, 30, 0.82);
+      --border: rgba(255, 255, 255, 0.16);
+      --text: #f3f6fc;
+      --muted: #9aa6be;
+      --accent: #4f8cff;
+      --accent-hover: #3a77eb;
+    }
+
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at center, #111827 0%, var(--bg) 75%);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+
+    #canvas-container {
+      position: fixed;
+      inset: 0;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    #canvas-container:active {
+      cursor: grabbing;
+    }
+
+    /* Top HUD */
+    .top-bar {
+      position: fixed;
+      top: env(safe-area-inset-top, 14px);
+      left: 14px;
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      z-index: 25;
+      pointer-events: none;
+      margin-top: 8px;
+    }
+
+    .badge {
+      pointer-events: auto;
+      background: var(--panel);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 8px #22c55e;
+    }
+
+    .top-actions {
+      display: flex;
+      gap: 8px;
+      pointer-events: auto;
+    }
+
+    /* Bottom Controls */
+    .controls-dock {
+      position: fixed;
+      bottom: calc(env(safe-area-inset-bottom, 12px) + 12px);
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 25;
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 10px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      max-width: calc(100vw - 24px);
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
+      padding: 8px 13px;
+      border-radius: 12px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: background 0.18s ease, transform 0.12s ease, border-color 0.18s ease;
+      white-space: nowrap;
+    }
+
+    button:hover {
+      background: rgba(255, 255, 255, 0.16);
+      border-color: rgba(255, 255, 255, 0.3);
+    }
+
+    button:active {
+      transform: scale(0.96);
+    }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+
+    button.primary:hover {
+      background: var(--accent-hover);
+    }
+
+    button.active {
+      background: rgba(79, 140, 255, 0.25);
+      border-color: var(--accent);
+      color: #cfe0ff;
+    }
+
+    .slider-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 0 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    input[type="range"] {
+      width: 78px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .hidden-input {
+      position: fixed;
+      top: -9999px;
+      left: -9999px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    /* Toast Status Banner */
+    #toast {
+      position: fixed;
+      top: 64px;
+      left: 50%;
+      transform: translateX(-50%) translateY(-10px);
+      z-index: 35;
+      background: rgba(20, 26, 40, 0.94);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      color: #e2e8f0;
+      padding: 9px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.25s ease, transform 0.25s ease;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      max-width: calc(100vw - 32px);
+      text-align: center;
+    }
+
+    #toast.show {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    /* Loading Overlay */
+    #loader-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 50;
+      background: rgba(7, 9, 14, 0.88);
+      backdrop-filter: blur(10px);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+      padding: 24px;
+      text-align: center;
+    }
+
+    #loader-overlay.visible {
+      display: flex;
+    }
+
+    .progress-track {
+      width: min(320px, 80vw);
+      height: 8px;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      transition: width 0.12s ease;
+    }
+
+    /* Fullscreen Lightbox */
+    #lightbox {
+      position: fixed;
+      inset: 0;
+      z-index: 40;
+      background: rgba(5, 7, 12, 0.92);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.28s ease;
+      padding: 20px;
+    }
+
+    #lightbox.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    #lightbox img {
+      max-width: min(92vw, 1280px);
+      max-height: 78vh;
+      border-radius: 14px;
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.75);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      object-fit: contain;
+      transform: scale(0.92);
+      transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+
+    #lightbox.open img {
+      transform: scale(1);
+    }
+
+    .lightbox-bar {
+      margin-top: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      padding: 8px 16px;
+      border-radius: 999px;
+      font-size: 13px;
+    }
+
+    /* Drop Zone Highlight */
+    #drop-hint {
+      position: fixed;
+      inset: 16px;
+      border: 2px dashed var(--accent);
+      border-radius: 24px;
+      background: rgba(79, 140, 255, 0.12);
+      z-index: 45;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 600;
+      pointer-events: none;
+    }
+
+    #drop-hint.active {
+      display: flex;
+    }
+
+    @media (max-width: 640px) {
+      .controls-dock {
+        padding: 8px 10px;
+        gap: 6px;
+      }
+      button {
+        padding: 7px 10px;
+        font-size: 12px;
+      }
+      .slider-group {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="canvas-container"></div>
+
+  <!-- Standalone Hidden Multi-File Inputs -->
+  <input type="file" id="replace-input" class="hidden-input" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" multiple />
+  <input type="file" id="append-input" class="hidden-input" accept="image/*,.heic,.heif,.jpg,.jpeg,.png,.webp" multiple />
+
+  <div class="top-bar">
+    <div class="badge">
+      <span class="dot"></span>
+      <span id="photo-counter">36 Demo Photos</span>
+    </div>
+    <div class="top-actions">
+      <button type="button" id="btn-replace" class="primary" title="Replace sphere with selected photos">
+        Replace Photos
+      </button>
+      <button type="button" id="btn-append" title="Add more photos to the current sphere">
+        + Add More
+      </button>
+    </div>
+  </div>
+
+  <div id="toast"></div>
+
+  <div class="controls-dock">
+    <button type="button" id="btn-play" class="active">Pause</button>
+    <div class="slider-group">
+      <span>Speed</span>
+      <input type="range" id="speed-slider" min="0" max="2.5" step="0.1" value="0.5" />
+    </div>
+    <button type="button" id="btn-pulse">Pulse</button>
+    <button type="button" id="btn-shuffle">Shuffle</button>
+    <button type="button" id="btn-reset">Reset View</button>
+  </div>
+
+  <div id="loader-overlay">
+    <div id="loader-title" style="font-size:16px;font-weight:600;">Building Photo Sphere...</div>
+    <div class="progress-track">
+      <div id="progress-fill" class="progress-fill"></div>
+    </div>
+    <div id="loader-sub" style="font-size:13px;color:var(--muted);">Optimizing textures & decoding HEIC photos...</div>
+  </div>
+
+  <div id="lightbox">
+    <img id="lightbox-img" src="" alt="Selected photo" />
+    <div class="lightbox-bar">
+      <span id="lightbox-caption">Photo 1 of 36</span>
+      <button type="button" id="btn-close-lightbox" class="primary">Back to Sphere (ESC)</button>
+    </div>
+  </div>
+
+  <div id="drop-hint">Drop photos (including HEIC) anywhere to build your sphere</div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/"
+      }
+    }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // --- State ---
+    const state = {
+      photos: [], // { thumbCanvas, fullUrl, name, aspect }
+      isDemo: true,
+      isPlaying: true,
+      speed: 0.5,
+      pulseMode: false,
+      isZoomedIn: false,
+      savedCameraPos: new THREE.Vector3(),
+      savedControlsTarget: new THREE.Vector3(),
+      savedSphereRotation: new THREE.Euler(),
+      activeTween: null
+    };
+
+    // --- Toast Helper ---
+    let toastTimer = null;
+    function showToast(msg, duration = 4200) {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), duration);
+    }
+
+    // --- Three.js Setup ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+
+    const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 2000);
+    camera.position.set(0, 0, 26);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.rotateSpeed = 0.75;
+    controls.zoomSpeed = 0.9;
+    controls.minDistance = 4;
+    controls.maxDistance = 120;
+
+    // Subtle ambient starfield
+    const starGeo = new THREE.BufferGeometry();
+    const starCount = 600;
+    const starPos = new Float32Array(starCount * 3);
+    for (let i = 0; i < starCount * 3; i++) {
+      starPos[i] = (Math.random() - 0.5) * 260;
+    }
+    starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+    const starMat = new THREE.PointsMaterial({ color: 0x8ab4ff, size: 0.45, transparent: true, opacity: 0.45 });
+    scene.add(new THREE.Points(starGeo, starMat));
+
+    const sphereGroup = new THREE.Group();
+    scene.add(sphereGroup);
+
+    let photoMeshes = [];
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+
+    // --- Demo Photo Generator ---
+    function createDemoPhotos(count = 36) {
+      const items = [];
+      for (let i = 0; i < count; i++) {
+        const canvas = document.createElement('canvas');
+        const isPortrait = i % 4 === 0;
+        canvas.width = isPortrait ? 384 : 512;
+        canvas.height = isPortrait ? 512 : 384;
+        const ctx = canvas.getContext('2d');
+
+        const hue1 = (i * 29) % 360;
+        const hue2 = (hue1 + 55) % 360;
+        const grad = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+        grad.addColorStop(0, `hsl(${hue1}, 68%, 48%)`);
+        grad.addColorStop(1, `hsl(${hue2}, 72%, 26%)`);
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+        ctx.lineWidth = 6;
+        ctx.beginPath();
+        ctx.arc(canvas.width * 0.5, canvas.height * 0.46, 72, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.font = '600 32px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(`Photo #${i + 1}`, canvas.width * 0.5, canvas.height * 0.49);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.75)';
+        ctx.font = '400 18px -apple-system, BlinkMacSystemFont, sans-serif';
+        ctx.fillText('Tap or click to inspect', canvas.width * 0.5, canvas.height * 0.58);
+
+        items.push({
+          thumbCanvas: canvas,
+          fullUrl: canvas.toDataURL('image/jpeg', 0.92),
+          name: `Demo Photo #${i + 1}`,
+          aspect: canvas.width / canvas.height
+        });
+      }
+      return items;
+    }
+
+    // --- File Type Detection ---
+    function isHeicFile(file) {
+      const type = (file.type || '').toLowerCase();
+      if (type === 'image/heic' || type === 'image/heif') return true;
+      return /\.(heic|heif)$/i.test(file.name);
+    }
+
+    function isSupportedImageFile(file) {
+      if (file.type && file.type.startsWith('image/')) return true;
+      return /\.(jpe?g|png|gif|webp|bmp|heic|heif|avif|tiff?)$/i.test(file.name);
+    }
+
+    // --- Resize Helper ---
+    function createThumbFromSource(source, srcWidth, srcHeight) {
+      const maxDim = 512;
+      let w = srcWidth || 512;
+      let h = srcHeight || 512;
+      const aspect = w / h;
+
+      if (w > h && w > maxDim) {
+        h = Math.round((h * maxDim) / w);
+        w = maxDim;
+      } else if (h >= w && h > maxDim) {
+        w = Math.round((w * maxDim) / h);
+        h = maxDim;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.max(1, w);
+      canvas.height = Math.max(1, h);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
+      return { thumbCanvas: canvas, aspect };
+    }
+
+    // --- Decode Standard Blob/File ---
+    async function decodeStandardBlob(blob, fileName) {
+      const fullUrl = URL.createObjectURL(blob);
+
+      if (typeof createImageBitmap === 'function') {
+        try {
+          const bitmap = await createImageBitmap(blob);
+          const { thumbCanvas, aspect } = createThumbFromSource(bitmap, bitmap.width, bitmap.height);
+          bitmap.close();
+          return { thumbCanvas, fullUrl, name: fileName, aspect };
+        } catch (_) {
+          // Fall through
+        }
+      }
+
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const { thumbCanvas, aspect } = createThumbFromSource(img, img.naturalWidth, img.naturalHeight);
+          resolve({ thumbCanvas, fullUrl, name: fileName, aspect });
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(fullUrl);
+          resolve(null);
+        };
+        img.src = fullUrl;
+      });
+    }
+
+    // --- Decode Modern 10-bit/HDR HEIC via libheif-js (Main Thread WASM, works on file://) ---
+    let libheifDecoder = null;
+    async function decodeWithLibheif(file) {
+      try {
+        const LibheifFactory = window.libheif;
+        if (!LibheifFactory) return null;
+
+        if (!libheifDecoder) {
+          const instance = typeof LibheifFactory === 'function' ? await LibheifFactory() : LibheifFactory;
+          libheifDecoder = new instance.HeifDecoder();
+        }
+
+        const buffer = await file.arrayBuffer();
+        const data = libheifDecoder.decode(new Uint8Array(buffer));
+        if (!data || !data.length) return null;
+
+        const image = data[0];
+        const width = image.get_width();
+        const height = image.get_height();
+
+        const fullCanvas = document.createElement('canvas');
+        fullCanvas.width = width;
+        fullCanvas.height = height;
+        const ctx = fullCanvas.getContext('2d');
+        const imgData = ctx.createImageData(width, height);
+
+        await new Promise((resolve, reject) => {
+          image.display(imgData, (displayData) => {
+            if (!displayData) return reject(new Error('HEIF display failed'));
+            resolve();
+          });
+        });
+
+        ctx.putImageData(imgData, 0, 0);
+
+        const fullBlob = await new Promise((resolve) => fullCanvas.toBlob(resolve, 'image/jpeg', 0.92));
+        if (!fullBlob) return null;
+
+        const fullUrl = URL.createObjectURL(fullBlob);
+        const { thumbCanvas, aspect } = createThumbFromSource(fullCanvas, width, height);
+
+        // Free full-size temporary canvas
+        fullCanvas.width = 0;
+        fullCanvas.height = 0;
+
+        return { thumbCanvas, fullUrl, name: file.name, aspect };
+      } catch (err) {
+        console.warn('libheif decode failed for', file.name, err);
+        return null;
+      }
+    }
+
+    // --- Decode HEIC via heic2any (with Worker-free fallback for file://) ---
+    async function decodeWithHeic2Any(file) {
+      if (typeof window.heic2any !== 'function') return null;
+      try {
+        // Temporarily disable Worker constructor if running from local file:// to prevent SecurityError
+        const isLocalFile = window.location.protocol === 'file:';
+        const OrigWorker = window.Worker;
+        if (isLocalFile) {
+          window.Worker = undefined;
+        }
+        let converted;
+        try {
+          converted = await window.heic2any({
+            blob: file,
+            toType: 'image/jpeg',
+            quality: 0.9
+          });
+        } finally {
+          if (isLocalFile) {
+            window.Worker = OrigWorker;
+          }
+        }
+        const jpegBlob = Array.isArray(converted) ? converted[0] : converted;
+        return await decodeStandardBlob(jpegBlob, file.name);
+      } catch (err) {
+        console.warn('heic2any failed for', file.name, err);
+        return null;
+      }
+    }
+
+    // --- Master File Processor ---
+    async function processImageFile(file) {
+      if (!isHeicFile(file)) {
+        return decodeStandardBlob(file, file.name);
+      }
+
+      // 1. Native browser decode (Safari / macOS / iOS)
+      const nativeResult = await decodeStandardBlob(file, file.name);
+      if (nativeResult) return nativeResult;
+
+      // 2. libheif-js WASM decoder (supports modern iPhone 10-bit/HDR HEIC & local file://)
+      const libheifResult = await decodeWithLibheif(file);
+      if (libheifResult) return libheifResult;
+
+      // 3. heic2any fallback
+      return await decodeWithHeic2Any(file);
+    }
+
+    async function ingestFiles(fileList, append = false) {
+      const rawFiles = Array.from(fileList || []);
+      const files = rawFiles.filter(isSupportedImageFile);
+
+      if (!files.length) {
+        showToast('No supported image files found in selection.');
+        return;
+      }
+
+      const heicCount = files.filter(isHeicFile).length;
+      const loader = document.getElementById('loader-overlay');
+      const fill = document.getElementById('progress-fill');
+      const sub = document.getElementById('loader-sub');
+      loader.classList.add('visible');
+
+      const processed = [];
+      let skipped = 0;
+
+      // Process HEIC files sequentially (1 at a time) to prevent WASM out-of-memory crashes
+      // and standard JPEGs/PNGs in batches of 10.
+      if (heicCount > 0) {
+        for (let i = 0; i < files.length; i++) {
+          const item = await processImageFile(files[i]);
+          if (item) {
+            processed.push(item);
+          } else {
+            skipped++;
+          }
+          const doneCount = i + 1;
+          const pct = Math.min(100, Math.round((doneCount / files.length) * 100));
+          fill.style.width = `${pct}%`;
+          sub.textContent = `Decoded ${doneCount} of ${files.length} photos...`;
+          // Yield to browser UI thread so progress bar updates smoothly
+          await new Promise((r) => setTimeout(r, 0));
+        }
+      } else {
+        const batchSize = 10;
+        for (let i = 0; i < files.length; i += batchSize) {
+          const chunk = files.slice(i, i + batchSize);
+          const results = await Promise.all(chunk.map(processImageFile));
+          results.forEach((item) => {
+            if (item) processed.push(item);
+            else skipped++;
+          });
+          const doneCount = Math.min(i + chunk.length, files.length);
+          const pct = Math.min(100, Math.round((doneCount / files.length) * 100));
+          fill.style.width = `${pct}%`;
+          sub.textContent = `Processed ${doneCount} of ${files.length} photos...`;
+        }
+      }
+
+      loader.classList.remove('visible');
+      fill.style.width = '0%';
+
+      if (!processed.length) {
+        showToast('Could not decode HEIC files. Ensure you are online so the HEIC decoder script can load.', 5200);
+        return;
+      }
+
+      if (!append || state.isDemo) {
+        state.photos.forEach((p) => {
+          if (p.fullUrl && p.fullUrl.startsWith('blob:')) URL.revokeObjectURL(p.fullUrl);
+        });
+        state.photos = processed;
+        state.isDemo = false;
+      } else {
+        state.photos = state.photos.concat(processed);
+      }
+
+      buildSphere(state.photos);
+
+      if (skipped > 0) {
+        showToast(`Loaded ${processed.length} photos (${skipped} could not be decoded).`, 4500);
+      } else {
+        showToast(`Loaded ${processed.length} photo${processed.length === 1 ? '' : 's'} onto sphere!`);
+      }
+    }
+
+    // --- Build Fibonacci Photo Sphere ---
+    function clearSphere() {
+      photoMeshes.forEach((mesh) => {
+        mesh.geometry.dispose();
+        if (mesh.material.map) mesh.material.map.dispose();
+        mesh.material.dispose();
+        sphereGroup.remove(mesh);
+      });
+      photoMeshes = [];
+    }
+
+    function buildSphere(photos) {
+      clearSphere();
+      const count = photos.length;
+      if (!count) return;
+
+      const label = state.isDemo ? `${count} Demo Photos` : `${count} Photo${count === 1 ? '' : 's'}`;
+      document.getElementById('photo-counter').textContent = label;
+
+      const baseAreaPerTile = 5.4;
+      const radius = Math.max(9.5, Math.sqrt((count * baseAreaPerTile) / (4 * Math.PI)) * 1.42);
+      const tileScale = Math.max(1.35, Math.min(2.6, (radius * 2.2) / Math.sqrt(count)));
+
+      const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+
+      photos.forEach((photo, idx) => {
+        const y = count === 1 ? 0 : 1 - (idx / (count - 1)) * 2;
+        const rAtY = Math.sqrt(Math.max(0, 1 - y * y));
+        const theta = goldenAngle * idx;
+
+        const x = Math.cos(theta) * rAtY;
+        const z = Math.sin(theta) * rAtY;
+
+        const pos = new THREE.Vector3(x * radius, y * radius, z * radius);
+
+        const width = photo.aspect >= 1 ? tileScale : tileScale * photo.aspect;
+        const height = photo.aspect >= 1 ? tileScale / photo.aspect : tileScale;
+
+        const geometry = new THREE.PlaneGeometry(width, height);
+        const texture = new THREE.CanvasTexture(photo.thumbCanvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.minFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+
+        const material = new THREE.MeshBasicMaterial({
+          map: texture,
+          side: THREE.DoubleSide
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.copy(pos);
+        mesh.lookAt(pos.clone().multiplyScalar(2));
+        mesh.userData = {
+          index: idx,
+          basePos: pos.clone(),
+          photo
+        };
+
+        sphereGroup.add(mesh);
+        photoMeshes.push(mesh);
+      });
+
+      if (!state.isZoomedIn) {
+        const idealDist = radius * 2.45;
+        controls.maxDistance = Math.max(120, idealDist * 2.5);
+        camera.position.normalize().multiplyScalar(idealDist);
+        controls.update();
+      }
+    }
+
+    // --- Smooth Camera Tween Helper ---
+    function startTween(targetCamPos, targetLookAt, duration = 650, onComplete = null) {
+      state.activeTween = {
+        startTime: performance.now(),
+        duration,
+        startCam: camera.position.clone(),
+        endCam: targetCamPos.clone(),
+        startTarget: controls.target.clone(),
+        endTarget: targetLookAt.clone(),
+        onComplete
+      };
+    }
+
+    // --- Open & Close Single Photo ---
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightbox-img');
+    const lightboxCaption = document.getElementById('lightbox-caption');
+
+    function openPhoto(mesh) {
+      if (state.isZoomedIn) return;
+      state.isZoomedIn = true;
+
+      state.savedCameraPos.copy(camera.position);
+      state.savedControlsTarget.copy(controls.target);
+      state.savedSphereRotation.copy(sphereGroup.rotation);
+
+      controls.enabled = false;
+
+      const worldPos = new THREE.Vector3();
+      mesh.getWorldPosition(worldPos);
+      const outwardDir = worldPos.clone().normalize();
+      const zoomDest = worldPos.clone().add(outwardDir.multiplyScalar(3.4));
+
+      const { photo, index } = mesh.userData;
+      lightboxImg.src = photo.fullUrl;
+      lightboxCaption.textContent = `${photo.name} (${index + 1} of ${state.photos.length})`;
+
+      startTween(zoomDest, worldPos, 520, () => {
+        lightbox.classList.add('open');
+      });
+    }
+
+    function closePhoto() {
+      if (!state.isZoomedIn) return;
+      lightbox.classList.remove('open');
+
+      sphereGroup.rotation.copy(state.savedSphereRotation);
+
+      startTween(state.savedCameraPos, state.savedControlsTarget, 560, () => {
+        state.isZoomedIn = false;
+        controls.enabled = true;
+      });
+    }
+
+    // --- Pointer Tap / Click Detection ---
+    let pointerDownPos = { x: 0, y: 0 };
+    let pointerDownTime = 0;
+
+    renderer.domElement.addEventListener('pointerdown', (e) => {
+      pointerDownPos = { x: e.clientX, y: e.clientY };
+      pointerDownTime = performance.now();
+    });
+
+    renderer.domElement.addEventListener('pointerup', (e) => {
+      if (state.isZoomedIn) return;
+      const dist = Math.hypot(e.clientX - pointerDownPos.x, e.clientY - pointerDownPos.y);
+      const elapsed = performance.now() - pointerDownTime;
+
+      if (dist < 8 && elapsed < 350) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObjects(photoMeshes, false);
+        if (hits.length > 0) {
+          openPhoto(hits[0].object);
+        }
+      }
+    });
+
+    // --- Keyboard & Button File Triggers ---
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && state.isZoomedIn) {
+        closePhoto();
+      }
+    });
+
+    document.getElementById('btn-close-lightbox').addEventListener('click', closePhoto);
+    lightbox.addEventListener('click', (e) => {
+      if (e.target === lightbox) closePhoto();
+    });
+
+    const replaceInput = document.getElementById('replace-input');
+    const appendInput = document.getElementById('append-input');
+
+    document.getElementById('btn-replace').addEventListener('click', () => {
+      if (state.isZoomedIn) closePhoto();
+      replaceInput.value = '';
+      replaceInput.click();
+    });
+
+    document.getElementById('btn-append').addEventListener('click', () => {
+      if (state.isZoomedIn) closePhoto();
+      appendInput.value = '';
+      appendInput.click();
+    });
+
+    replaceInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        ingestFiles(e.target.files, false);
+      }
+    });
+
+    appendInput.addEventListener('change', (e) => {
+      if (e.target.files && e.target.files.length > 0) {
+        ingestFiles(e.target.files, true);
+      }
+    });
+
+    const btnPlay = document.getElementById('btn-play');
+    btnPlay.addEventListener('click', () => {
+      state.isPlaying = !state.isPlaying;
+      btnPlay.textContent = state.isPlaying ? 'Pause' : 'Play';
+      btnPlay.classList.toggle('active', state.isPlaying);
+    });
+
+    document.getElementById('speed-slider').addEventListener('input', (e) => {
+      state.speed = parseFloat(e.target.value);
+    });
+
+    const btnPulse = document.getElementById('btn-pulse');
+    btnPulse.addEventListener('click', () => {
+      state.pulseMode = !state.pulseMode;
+      btnPulse.classList.toggle('active', state.pulseMode);
+      if (!state.pulseMode) {
+        photoMeshes.forEach((m) => m.position.copy(m.userData.basePos));
+      }
+    });
+
+    document.getElementById('btn-shuffle').addEventListener('click', () => {
+      if (state.isZoomedIn || state.photos.length < 2) return;
+      for (let i = state.photos.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [state.photos[i], state.photos[j]] = [state.photos[j], state.photos[i]];
+      }
+      buildSphere(state.photos);
+    });
+
+    document.getElementById('btn-reset').addEventListener('click', () => {
+      if (state.isZoomedIn) closePhoto();
+      const dist = camera.position.length() || 26;
+      startTween(new THREE.Vector3(0, 0, dist), new THREE.Vector3(0, 0, 0), 600);
+    });
+
+    // Desktop Drag & Drop
+    const dropHint = document.getElementById('drop-hint');
+    let dragCounter = 0;
+    window.addEventListener('dragenter', (e) => {
+      e.preventDefault();
+      dragCounter++;
+      dropHint.classList.add('active');
+    });
+    window.addEventListener('dragleave', (e) => {
+      e.preventDefault();
+      dragCounter--;
+      if (dragCounter <= 0) {
+        dragCounter = 0;
+        dropHint.classList.remove('active');
+      }
+    });
+    window.addEventListener('dragover', (e) => e.preventDefault());
+    window.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dragCounter = 0;
+      dropHint.classList.remove('active');
+      if (e.dataTransfer.files && e.dataTransfer.files.length) {
+        ingestFiles(e.dataTransfer.files, false);
+      }
+    });
+
+    // Resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // --- Main Animation Loop ---
+    const clock = new THREE.Clock();
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const dt = clock.getDelta();
+      const elapsed = clock.getElapsedTime();
+
+      if (state.activeTween) {
+        const t = Math.min(1, (performance.now() - state.activeTween.startTime) / state.activeTween.duration);
+        const ease = 1 - Math.pow(1 - t, 3);
+        camera.position.lerpVectors(state.activeTween.startCam, state.activeTween.endCam, ease);
+        controls.target.lerpVectors(state.activeTween.startTarget, state.activeTween.endTarget, ease);
+        controls.update();
+
+        if (t >= 1) {
+          const cb = state.activeTween.onComplete;
+          state.activeTween = null;
+          if (cb) cb();
+        }
+      } else if (!state.isZoomedIn) {
+        if (state.isPlaying) {
+          sphereGroup.rotation.y += dt * 0.25 * state.speed;
+          sphereGroup.rotation.x = Math.sin(elapsed * 0.25) * 0.12;
+        }
+
+        if (state.pulseMode) {
+          for (let i = 0; i < photoMeshes.length; i++) {
+            const mesh = photoMeshes[i];
+            const wave = Math.sin(elapsed * 2.4 + i * 0.35) * 0.35;
+            mesh.position.copy(mesh.userData.basePos).multiplyScalar(1 + wave * 0.05);
+          }
+        }
+
+        controls.update();
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // Initialize with 36 demo cards
+    state.photos = createDemoPhotos(36);
+    buildSphere(state.photos);
+    animate();
+  </script>
+</body>
+</html>
